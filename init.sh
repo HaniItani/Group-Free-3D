@@ -2,6 +2,6 @@
 
 # compile custom operators
 cd pointnet2
-python setup.py install --user
+python setup.py install
 cd ..
 

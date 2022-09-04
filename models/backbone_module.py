@@ -133,6 +133,7 @@ class Pointnet2Backbone(nn.Module):
         end_points['fp2_features'] = features
         end_points['fp2_xyz'] = end_points['sa2_xyz']
         num_seed = end_points['fp2_xyz'].shape[1]
+        # print(end_points['sa1_inds'].shape)
         end_points['fp2_inds'] = end_points['sa1_inds'][:, 0:num_seed]  # indices among the entire input point clouds
 
         return end_points

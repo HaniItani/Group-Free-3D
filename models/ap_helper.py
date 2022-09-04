@@ -4,6 +4,7 @@ import os
 import sys
 import numpy as np
 import torch
+import json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
@@ -15,7 +16,6 @@ from box_util import get_3d_box
 
 sys.path.append(os.path.join(ROOT_DIR, 'sunrgbd'))
 from sunrgbd_utils import extract_pc_in_box3d
-
 
 def flip_axis_to_camera(pc):
     ''' Flip X-right,Y-forward,Z-up to X-right,Y-down,Z-forward
@@ -256,13 +256,14 @@ def parse_groundtruths(end_points, config_dict, size_cls_agnostic):
 class APCalculator(object):
     ''' Calculating Average Precision '''
 
-    def __init__(self, ap_iou_thresh=0.25, class2type_map=None):
+    def __init__(self, ap_iou_thresh=0.25, class2type_map=None, dataset='scannet'):
         """
         Args:
             ap_iou_thresh: float between 0 and 1.0
                 IoU threshold to judge whether a prediction is positive.
             class2type_map: [optional] dict {class_int:class_name}
         """
+        self.dataset = dataset
         self.ap_iou_thresh = ap_iou_thresh
         self.class2type_map = class2type_map
         self.reset()
@@ -283,11 +284,14 @@ class APCalculator(object):
             self.pred_map_cls[self.scan_cnt] = batch_pred_map_cls[i]
             self.scan_cnt += 1
 
-    def compute_metrics(self):
+    def compute_metrics(self,prefix=None):
         """ Use accumulated predictions and groundtruths to compute Average Precision.
         """
+        
+        json_writer(self.scan_cnt, self.gt_map_cls, self.pred_map_cls, dataset=self.dataset, prefix=prefix)
+
         rec, prec, ap = eval_det_multiprocessing(self.pred_map_cls, self.gt_map_cls, ovthresh=self.ap_iou_thresh,
-                                                 get_iou_func=get_iou_obb)
+                                                 get_iou_func=get_iou_obb,prefix=prefix)
         ret_dict = {}
         for key in sorted(ap.keys()):
             clsname = self.class2type_map[key] if self.class2type_map else str(key)
@@ -309,3 +313,46 @@ class APCalculator(object):
         self.gt_map_cls = {}  # {scan_id: [(classname, bbox)]}
         self.pred_map_cls = {}  # {scan_id: [(classname, bbox, score)]}
         self.scan_cnt = 0
+
+def json_writer(scan_cnt, gt_map_cls, pred_map_cls, dataset='scannet', prefix=None):
+
+    if dataset == 'scannet':
+        type2class = {'cabinet':0, 'bed':1, 'chair':2, 'sofa':3, 'table':4, 'door':5,
+                'window':6,'bookshelf':7,'picture':8, 'counter':9, 'desk':10, 'curtain':11,
+                'refrigerator':12, 'showercurtrain':13, 'toilet':14, 'sink':15, 'bathtub':16, 'garbagebin':17}
+        class2type = {type2class[t]:t for t in type2class}
+
+    elif dataset == 'sunrgbd':
+        type2class={'bed':0, 'table':1, 'sofa':2, 'chair':3, 'toilet':4, 'desk':5, 'dresser':6, 
+            'night_stand':7, 'bookshelf':8, 'bathtub':9}
+        class2type = {type2class[t]:t for t in type2class}
+
+    gt = {'database':{}}
+    predictions={'results':{}}
+
+    for iter in range(scan_cnt):
+        gt['database'][str(iter)]={}
+        if len(gt_map_cls[iter])==0:
+            gt['database'][str(iter)]['annotations'] = []
+            continue
+        sem_label, box = zip(*gt_map_cls[iter])
+        temp_list = []
+        for i in range(len(sem_label)):
+            temp_list.append({'label': class2type[sem_label[i]], 'segment':box[i].tolist()})
+        gt['database'][str(iter)]['annotations'] = temp_list
+
+    for iter in range(scan_cnt):
+        if len(pred_map_cls[iter])==0:
+            predictions['results'][str(iter)] = []
+            continue
+        sem_label, box, score = zip(*pred_map_cls[iter])
+        temp_list = []
+        for i in range(len(sem_label)):
+            temp_list.append({'score': float(score[i]), 'segment':box[i].tolist(), 'label': class2type[sem_label[i]]})
+        predictions['results'][str(iter)] = temp_list
+
+    with open('gt_{prefix}.json'.format(prefix=prefix), 'w', encoding='utf-8') as f:
+        json.dump(gt, f, ensure_ascii=False, indent=4)
+
+    with open('predictions_{prefix}.json'.format(prefix=prefix), 'w', encoding='utf-8') as f:
+        json.dump(predictions, f, ensure_ascii=False, indent=4)

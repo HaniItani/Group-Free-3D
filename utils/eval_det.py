@@ -20,7 +20,7 @@
     Ref: https://raw.githubusercontent.com/rbgirshick/py-faster-rcnn/master/lib/datasets/voc_eval.py
 """
 import numpy as np
-
+import pickle
 
 def voc_ap(rec, prec, use_07_metric=False):
     """ ap = voc_ap(rec, prec, [use_07_metric])
@@ -223,7 +223,7 @@ def eval_det(pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_func=
 from multiprocessing import Pool
 
 
-def eval_det_multiprocessing(pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_func=get_iou):
+def eval_det_multiprocessing(pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_func=get_iou, prefix=None):
     """ Generic functions to compute precision/recall for object detection
         for multiple classes.
         Input:
@@ -257,6 +257,15 @@ def eval_det_multiprocessing(pred_all, gt_all, ovthresh=0.25, use_07_metric=Fals
     rec = {}
     prec = {}
     ap = {}
+
+    a_file = open("pred_{prefix}.pkl".format(prefix=prefix), "wb")
+    pickle.dump(pred, a_file)
+    a_file.close()
+
+    a_file = open("gt_{prefix}.pkl".format(prefix=prefix), "wb")
+    pickle.dump(gt, a_file)
+    a_file.close()
+
     p = Pool(processes=10)
     ret_values = p.map(eval_det_cls_wrapper,
                        [(pred[classname], gt[classname], ovthresh, use_07_metric, get_iou_func) for classname in

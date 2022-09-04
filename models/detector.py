@@ -60,6 +60,7 @@ class GroupFreeDetector(nn.Module):
         self.size_cls_agnostic = size_cls_agnostic
 
         # Backbone point feature learning
+        print(self.input_feature_dim)
         self.backbone_net = Pointnet2Backbone(input_feature_dim=self.input_feature_dim, width=self.width)
 
         if self.sampling == 'fps':
@@ -156,6 +157,9 @@ class GroupFreeDetector(nn.Module):
         points_features = end_points['fp2_features']
         xyz = end_points['fp2_xyz']
         features = end_points['fp2_features']
+        # print(features.shape)
+        # print(xyz.shape)
+        # print(end_points['fp2_inds'].shape)
         end_points['seed_inds'] = end_points['fp2_inds']
         end_points['seed_xyz'] = xyz
         end_points['seed_features'] = features
@@ -169,7 +173,7 @@ class GroupFreeDetector(nn.Module):
         elif self.sampling == 'kps':
             points_obj_cls_logits = self.points_obj_cls(features)  # (batch_size, 1, num_seed)
             end_points['seeds_obj_cls_logits'] = points_obj_cls_logits
-            points_obj_cls_scores = torch.sigmoid(points_obj_cls_logits).squeeze(1)
+            points_obj_cls_scores = torch.sigmoid(points_obj_cls_logits).squeeze(1)        
             sample_inds = torch.topk(points_obj_cls_scores, self.num_proposal)[1].int()
             xyz, features, sample_inds = self.gsample_module(xyz, features, sample_inds)
             cluster_feature = features
@@ -181,11 +185,12 @@ class GroupFreeDetector(nn.Module):
             raise NotImplementedError
 
         # Proposal
+        # print(cluster_feature.shape)
+        
         proposal_center, proposal_size = self.proposal_head(cluster_feature,
                                                             base_xyz=cluster_xyz,
                                                             end_points=end_points,
                                                             prefix='proposal_')  # N num_proposal 3
-
         base_xyz = proposal_center.detach().clone()
         base_size = proposal_size.detach().clone()
 

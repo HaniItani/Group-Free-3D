@@ -6,6 +6,7 @@ from datetime import datetime
 import argparse
 import torch
 from torch.utils.data import DataLoader
+import pickle
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = BASE_DIR
@@ -172,8 +173,8 @@ def evaluate_one_time(test_loader, DATASET_CONFIG, CONFIG_DICT, AP_IOU_THRESHOLD
             prefixes = _prefixes.copy() + ['all_layers_']
         elif args.dataset == 'scannet':
             _prefixes = ['last_', 'proposal_']
-            _prefixes += [f'{i}head_' for i in range(args.num_decoder_layers - 1)]
-            prefixes = _prefixes.copy() + ['last_three_'] + ['all_layers_']
+            # _prefixes += [f'{i}head_' for i in range(args.num_decoder_layers - 1)]
+            prefixes = _prefixes.copy() # + ['last_three_'] + ['all_layers_']
     else:
         prefixes = ['proposal_']  # only proposal
         _prefixes = prefixes
@@ -187,7 +188,7 @@ def evaluate_one_time(test_loader, DATASET_CONFIG, CONFIG_DICT, AP_IOU_THRESHOLD
     else:
         last_three_prefixes = []
 
-    ap_calculator_list = [APCalculator(iou_thresh, DATASET_CONFIG.class2type) \
+    ap_calculator_list = [APCalculator(iou_thresh, DATASET_CONFIG.class2type, dataset=args.dataset) \
                           for iou_thresh in AP_IOU_THRESHOLDS]
     mAPs = [[iou_thresh, {k: 0 for k in prefixes}] for iou_thresh in AP_IOU_THRESHOLDS]
 
@@ -201,11 +202,15 @@ def evaluate_one_time(test_loader, DATASET_CONFIG, CONFIG_DICT, AP_IOU_THRESHOLD
             batch_data_label[key] = batch_data_label[key].cuda(non_blocking=True)
 
         # Forward pass
-        inputs = {'point_clouds': batch_data_label['point_clouds']}
+        # print(batch_data_label.keys())
+        inputs = {'point_clouds': batch_data_label['point_clouds'], 'box_label_mask': batch_data_label['box_label_mask'], \
+            'center_label':batch_data_label['center_label'], 'size_gts':batch_data_label['size_gts'], \
+                'point_instance_label':batch_data_label['point_instance_label']}
         with torch.no_grad():
             end_points = model(inputs)
 
         # Compute loss
+        # end_points_saved = {}
         for key in batch_data_label:
             assert (key not in end_points)
             end_points[key] = batch_data_label[key]
@@ -223,6 +228,18 @@ def evaluate_one_time(test_loader, DATASET_CONFIG, CONFIG_DICT, AP_IOU_THRESHOLD
                                      heading_loss_type=args.heading_loss_type,
                                      heading_delta=args.heading_delta,
                                      size_cls_agnostic=args.size_cls_agnostic)
+        # print('******************')
+        # for key in end_points.keys():
+        #     if torch.is_tensor(end_points[key]):
+        #         end_points_saved[key] = end_points[key].cpu().detach().numpy()
+        #     else:
+        #         end_points_saved[key] = end_points[key]
+
+        #         # Store data (serialize)
+        # with open('end_points.pickle', 'wb') as handle:
+        #     pickle.dump(end_points_saved, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+        # print('******************')
 
         # Accumulate statistics and print out
         for key in end_points:
@@ -303,7 +320,7 @@ def evaluate_one_time(test_loader, DATASET_CONFIG, CONFIG_DICT, AP_IOU_THRESHOLD
                 ap_calculator.step(batch_pred_map_cls, batch_gt_map_cls)
         # Evaluate average precision
         for i, ap_calculator in enumerate(ap_calculator_list):
-            metrics_dict = ap_calculator.compute_metrics()
+            metrics_dict = ap_calculator.compute_metrics(prefix=prefix)
             logger.info(f'===================>T{time} {prefix} IOU THRESH: {AP_IOU_THRESHOLDS[i]}<==================')
             for key in metrics_dict:
                 logger.info(f'{key} {metrics_dict[key]}')
