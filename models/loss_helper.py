@@ -11,6 +11,54 @@ sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from .losses import smoothl1_loss, l1_loss, SigmoidFocalClassificationLoss
 
 
+def center_biased_sampling_loss(end_points, topk, sa_index):
+    if f'ss{sa_index}_scores' not in end_points:
+        return 0
+    box_label_mask = end_points['box_label_mask']
+    seed_inds = end_points[f'sa{sa_index}_inds'].long()  # B, K
+    seed_xyz = end_points[f'sa{sa_index}_xyz']  # B, K, 3
+    seeds_obj_cls_logits = end_points[f'ss{sa_index}_scores']  # B, 1, K
+    gt_center = end_points['center_label'][:, :, 0:3]  # B, K2, 3
+    gt_size = end_points['size_gts'][:, :, 0:3]  # B, K2, 3
+    B = gt_center.shape[0]
+    K = seed_xyz.shape[1]
+    K2 = gt_center.shape[1]
+
+    point_instance_label = end_points['point_instance_label']  # B, num_points
+    object_assignment = torch.gather(point_instance_label, 1, seed_inds)  # B, num_seed
+    object_assignment[object_assignment < 0] = K2 - 1  # set background points to the last gt bbox
+    object_assignment_one_hot = torch.zeros((B, K, K2)).to(seed_xyz.device)
+    object_assignment_one_hot.scatter_(2, object_assignment.unsqueeze(-1), 1)  # (B, K, K2)
+    delta_xyz = seed_xyz.unsqueeze(2) - gt_center.unsqueeze(1)  # (B, K, K2, 3)
+    delta_xyz = delta_xyz / (gt_size.unsqueeze(1) + 1e-6)  # (B, K, K2, 3)
+    new_dist = torch.sum(delta_xyz ** 2, dim=-1)
+    euclidean_dist1 = torch.sqrt(new_dist + 1e-6)  # BxKxK2
+    euclidean_dist1 = euclidean_dist1 * object_assignment_one_hot + 100 * (1 - object_assignment_one_hot)  # BxKxK2
+    euclidean_dist1 = euclidean_dist1.transpose(1, 2).contiguous()  # BxK2xK
+    topk_inds = torch.topk(euclidean_dist1, topk, largest=False)[1] * box_label_mask[:, :, None] + \
+                (box_label_mask[:, :, None] - 1)  # BxK2xtopk
+    topk_inds = topk_inds.long()  # BxK2xtopk
+    topk_inds = topk_inds.view(B, -1).contiguous()  # B, K2xtopk
+    batch_inds = torch.arange(B).unsqueeze(1).repeat(1, K2 * topk).to(seed_xyz.device)
+    batch_topk_inds = torch.stack([batch_inds, topk_inds], -1).view(-1, 2).contiguous()
+
+    objectness_label = torch.zeros((B, K + 1), dtype=torch.long).to(seed_xyz.device)
+    objectness_label[batch_topk_inds[:, 0], batch_topk_inds[:, 1]] = 1
+    objectness_label = objectness_label[:, :K]
+    objectness_label_mask = torch.gather(point_instance_label, 1, seed_inds)  # B, num_seed
+    objectness_label[objectness_label_mask < 0] = 0
+
+    # Compute objectness loss
+    criterion = SigmoidFocalClassificationLoss()
+    cls_weights = (objectness_label >= 0).float()
+    cls_normalizer = cls_weights.sum(dim=1, keepdim=True).float()
+    cls_weights /= torch.clamp(cls_normalizer, min=1.0)
+    cls_loss_src = criterion(seeds_obj_cls_logits.view(B, K, 1), objectness_label.unsqueeze(-1), weights=cls_weights)
+    objectness_loss = cls_loss_src.sum() / B
+
+    return objectness_loss
+
+
 def compute_points_obj_cls_loss_hard_topk(end_points, topk):
     box_label_mask = end_points['box_label_mask']
     seed_inds = end_points['seed_inds'].long()  # B, K
@@ -311,6 +359,10 @@ def get_loss(end_points, config, num_decoder_layers,
     objectness_loss_sum, end_points = \
         compute_objectness_loss_based_on_query_points(end_points, num_decoder_layers)
 
+    ss_loss = 0
+    for i in range(1,4):
+        ss_loss += center_biased_sampling_loss(end_points, query_points_obj_topk, i)
+
     end_points['sum_heads_objectness_loss'] = objectness_loss_sum
 
     # Box loss and sem cls loss
@@ -327,6 +379,7 @@ def get_loss(end_points, config, num_decoder_layers,
     loss = query_points_generator_loss_coef * query_points_generation_loss + \
            1.0 / (num_decoder_layers + 1) * (
                    obj_loss_coef * objectness_loss_sum + box_loss_coef * box_loss_sum + sem_cls_loss_coef * sem_cls_loss_sum)
+    loss += ss_loss
     loss *= 10
 
     end_points['loss'] = loss

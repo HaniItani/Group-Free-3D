@@ -51,9 +51,10 @@ def parse_option():
     parser.add_argument('--heading_delta', default=1.0, type=float, help='delta for smoothl1 loss in heading loss')
     parser.add_argument('--query_points_obj_topk', default=4, type=int, help='query_points_obj_topk')
     parser.add_argument('--size_cls_agnostic', action='store_true', help='Use class-agnostic size prediction.')
+    parser.add_argument('--score_sampling', action='store_true', help='Use score based sampling.')
 
     # Data
-    parser.add_argument('--batch_size', type=int, default=2, help='Batch Size per GPU during training [default: 8]')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch Size per GPU during training [default: 8]')
     parser.add_argument('--dataset', default='scannet', help='Dataset name. sunrgbd or scannet. [default: scannet]')
     parser.add_argument('--num_point', type=int, default=50000, help='Point Number [default: 50000]')
     parser.add_argument('--data_root', default='data', help='data root path')
@@ -235,7 +236,8 @@ def get_model(args, DATASET_CONFIG):
                               dim_feedforward=args.dim_feedforward,
                               self_position_embedding=args.self_position_embedding,
                               cross_position_embedding=args.cross_position_embedding,
-                              size_cls_agnostic=True if args.size_cls_agnostic else False)
+                              size_cls_agnostic=True if args.size_cls_agnostic else False,
+                              score_sampling=args.score_sampling)
 
     criterion = get_loss
     return model, criterion

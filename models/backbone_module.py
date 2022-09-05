@@ -16,7 +16,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'pointnet2'))
 sys.path.append(os.path.join(ROOT_DIR, 'ops', 'pt_custom_ops'))
 
 from pointnet2_modules import PointnetSAModuleVotes, PointnetFPModule
-
+from modules import PointsObjClsModule
 
 class Pointnet2Backbone(nn.Module):
     r"""
@@ -30,7 +30,7 @@ class Pointnet2Backbone(nn.Module):
             e.g. 3 for RGB.
     """
 
-    def __init__(self, input_feature_dim=0, width=1, depth=2):
+    def __init__(self, input_feature_dim=0, width=1, depth=2, score_sampling=False):
         super().__init__()
         self.depth = depth
         self.width = width
@@ -43,6 +43,7 @@ class Pointnet2Backbone(nn.Module):
             use_xyz=True,
             normalize_xyz=True
         )
+        self.ss1 = PointsObjClsModule(128 * width + 3) if score_sampling else None
 
         self.sa2 = PointnetSAModuleVotes(
             npoint=1024,
@@ -52,6 +53,7 @@ class Pointnet2Backbone(nn.Module):
             use_xyz=True,
             normalize_xyz=True
         )
+        self.ss2 = PointsObjClsModule(256 * width + 3) if score_sampling else None
 
         self.sa3 = PointnetSAModuleVotes(
             npoint=512,
@@ -61,6 +63,7 @@ class Pointnet2Backbone(nn.Module):
             use_xyz=True,
             normalize_xyz=True
         )
+        self.ss3 = PointsObjClsModule(256 * width + 3) if score_sampling else None
 
         self.sa4 = PointnetSAModuleVotes(
             npoint=256,
@@ -113,16 +116,38 @@ class Pointnet2Backbone(nn.Module):
         end_points['sa1_xyz'] = xyz
         end_points['sa1_features'] = features
 
-        xyz, features, fps_inds = self.sa2(xyz, features)  # this fps_inds is just 0,1,...,1023
+        if self.ss1 is not None:
+            end_points['ss1_scores'] = self.ss1(torch.cat([xyz.permute(0,2,1), features], axis=1))
+            ss1_scores = end_points['ss1_scores'].detach().squeeze(1)
+            inds = torch.topk(ss1_scores, 1024)[1].int()
+        else:
+            inds = None
+
+        xyz, features, fps_inds = self.sa2(xyz, features, inds)  # this fps_inds is just 0,1,...,1023
         end_points['sa2_inds'] = fps_inds
         end_points['sa2_xyz'] = xyz
         end_points['sa2_features'] = features
 
-        xyz, features, fps_inds = self.sa3(xyz, features)  # this fps_inds is just 0,1,...,511
+        if self.ss2 is not None:
+            end_points['ss2_scores'] = self.ss2(torch.cat([xyz.permute(0,2,1), features], axis=1))
+            ss2_scores = end_points['ss2_scores'].detach().squeeze(1)
+            inds = torch.topk(ss2_scores, 512)[1].int()
+        else:
+            inds = None
+
+        xyz, features, fps_inds = self.sa3(xyz, features, inds)  # this fps_inds is just 0,1,...,511
+        end_points['sa3_inds'] = fps_inds
         end_points['sa3_xyz'] = xyz
         end_points['sa3_features'] = features
 
-        xyz, features, fps_inds = self.sa4(xyz, features)  # this fps_inds is just 0,1,...,255
+        if self.ss3 is not None:
+            end_points['ss3_scores'] = self.ss3(torch.cat([xyz.permute(0,2,1), features], axis=1))
+            ss3_scores = end_points['ss3_scores'].detach().squeeze(1)
+            inds = torch.topk(ss3_scores, 256)[1].int()
+        else:
+            inds = None
+
+        xyz, features, fps_inds = self.sa4(xyz, features, inds)  # this fps_inds is just 0,1,...,255
         end_points['sa4_xyz'] = xyz
         end_points['sa4_features'] = features
 

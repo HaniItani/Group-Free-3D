@@ -38,7 +38,7 @@ class GroupFreeDetector(nn.Module):
                  input_feature_dim=0, width=1, bn_momentum=0.1, sync_bn=False, num_proposal=128, sampling='kps',
                  dropout=0.1, activation="relu", nhead=8, num_decoder_layers=6, dim_feedforward=2048,
                  self_position_embedding='xyz_learned', cross_position_embedding='xyz_learned',
-                 size_cls_agnostic=False):
+                 size_cls_agnostic=False, score_sampling=False):
         super().__init__()
 
         self.num_class = num_class
@@ -61,7 +61,7 @@ class GroupFreeDetector(nn.Module):
 
         # Backbone point feature learning
         print(self.input_feature_dim)
-        self.backbone_net = Pointnet2Backbone(input_feature_dim=self.input_feature_dim, width=self.width)
+        self.backbone_net = Pointnet2Backbone(input_feature_dim=self.input_feature_dim, width=self.width, score_sampling=score_sampling)
 
         if self.sampling == 'fps':
             self.fps_module = FPSModule(num_proposal)
